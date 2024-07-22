@@ -6,7 +6,7 @@ pub mod dqn;
 pub mod env;
 pub mod ppo;
 
-/// A Python module implemented in Rust.
+/// Reinforcement Learning in Rust.
 #[pymodule]
 fn oxilearnpy(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add("__version__", "0.0.1")?;

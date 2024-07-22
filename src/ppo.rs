@@ -16,7 +16,7 @@ pub struct PPO {
 
 #[pymethods]
 impl PPO {
-    /// Create a new DQNAgent
+    /// Create a new PPOAgent
     #[new]
     #[pyo3(signature = (seed))]
     fn new(seed: i64) -> PyResult<Self> {
@@ -36,14 +36,6 @@ impl PPO {
     }
 
     fn create_agent(&mut self, obs_size: i64, n_action: i64) -> PyResult<()> {
-        // let obs_size = match environment.observation_space().unwrap() {
-        //     SpaceInfo::Discrete(_) => Err(PyTypeError::new_err("ambiente inválido")),
-        //     SpaceInfo::Continuous(s) => Ok(s.len()),
-        // }? as i64;
-        // let output = match environment.action_space().unwrap() {
-        //     SpaceInfo::Discrete(n) => Ok(n),
-        //     SpaceInfo::Continuous(_) => Err(PyTypeError::new_err("ambiente inválido")),
-        // }? as i64;
         let device = Device::Cpu;
         let policy = Policy::new(obs_size, n_action, device);
         let optimizer = OptimizerEnum::Adam(Adam::default());
