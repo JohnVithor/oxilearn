@@ -140,8 +140,8 @@ pub fn min(kind: Kind) -> Option<f64> {
 pub fn eps(kind: Kind) -> Option<f64> {
     Some(match kind {
         Kind::Half => 0.0009765625,
-        Kind::Float => std::f32::EPSILON as _,
-        Kind::Double => std::f64::EPSILON,
+        Kind::Float => f32::EPSILON as _,
+        Kind::Double => f64::EPSILON,
         _ => return None,
     })
 }

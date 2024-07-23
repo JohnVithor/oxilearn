@@ -146,7 +146,7 @@ impl PPOAgent {
     fn anneal_learning_rate(&mut self, iteration: usize, num_iterations: usize) {
         let frac = 1.0 - ((iteration as f64 - 1.0) / num_iterations as f64);
         self.parameters.current_lr = frac * self.parameters.learning_rate;
-        // self.optimizer.set_lr(self.current_lr);
+        self.optimizer.set_lr(self.parameters.current_lr);
     }
 
     fn flatten_data(
@@ -268,7 +268,7 @@ impl PPOAgent {
 
         let var_y: f64 = b_returns.var(true).try_into().unwrap();
         let explained_var = if var_y == 0.0 {
-            std::f64::NAN
+            f64::NAN
         } else {
             let diff = b_values - b_returns;
             let v: f64 = diff.var(true).try_into().unwrap();
@@ -317,8 +317,8 @@ impl PPOAgent {
             Tensor::zeros(mb_advantages.size(), (mb_advantages.kind(), self.device)).fill_(0.0);
         new_adv = mb_advantages.clone(&new_adv);
         if self.parameters.norm_adv {
-            new_adv =
-                (mb_advantages - mb_advantages.mean(Kind::Float)) / (mb_advantages.std(true) + 1e-8)
+            new_adv = (mb_advantages - mb_advantages.mean(Kind::Float))
+                / (mb_advantages.std(true) + f64::EPSILON)
         }
         let mb_advantages = new_adv;
 
