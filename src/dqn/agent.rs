@@ -1,10 +1,4 @@
 use std::fs;
-use tch::{
-    nn::{Module, Optimizer, OptimizerConfig, VarStore},
-    Device, Kind, TchError, Tensor,
-};
-
-use crate::{env::Env, optimizer_enum::OptimizerEnum, OxiLearnErr};
 
 use super::{
     epsilon_greedy::EpsilonGreedy, experience_buffer::RandomExperienceBuffer,

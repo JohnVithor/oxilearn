@@ -1,5 +1,5 @@
+use candle_core::Tensor;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
-use tch::Tensor;
 
 pub enum EpsilonUpdateStrategy {
     AdaptativeEpsilon {
@@ -109,9 +109,9 @@ impl EpsilonGreedy {
         // print_python_like(values);
         if self.should_explore() {
             // println!("{:?}", values.size()[0]);
-            self.rng.gen_range(0..values.size()[0] as usize)
+            self.rng.gen_range(0..values.shape().dims1().unwrap())
         } else {
-            let a: i32 = values.argmax(0, true).try_into().unwrap();
+            let a: u32 = values.argmax(0).unwrap().to_scalar().unwrap();
             a as usize
         }
     }
