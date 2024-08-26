@@ -1,47 +1,40 @@
-use tch::{
-    nn::{self, Module, VarStore},
-    Device, Tensor,
-};
+use candle_core::Result;
+use candle_core::{Device, Tensor};
+use candle_nn::{Module, VarBuilder, VarMap};
 
-use crate::OxiLearnErr;
-
-pub type PolicyGenerator = dyn Fn(Device) -> (Box<dyn Module>, VarStore);
-pub type ActivationFunction = fn(&Tensor) -> Tensor;
+pub type PolicyGenerator = dyn Fn(Device) -> Result<(Box<dyn Module>, VarMap)>;
+pub type ActivationFunction = fn(&Tensor) -> Result<Tensor>;
 
 pub fn generate_policy(
-    net_arch: Vec<(i64, ActivationFunction)>,
+    net_arch: Vec<(usize, ActivationFunction)>,
     last_activation: ActivationFunction,
-    input: i64,
-    output: i64,
-) -> Result<Box<PolicyGenerator>, OxiLearnErr> {
-    Ok(Box::new(
-        move |device: Device| -> (Box<dyn Module>, VarStore) {
-            let iter = net_arch.clone().into_iter().enumerate();
-            let mut previous = input;
-            let mut mem_policy = VarStore::new(device);
-            let mut policy_net = nn::seq();
+    input: usize,
+    output: usize,
+) -> Box<PolicyGenerator> {
+    Box::new(move |device: Device| -> Result<(Box<dyn Module>, VarMap)> {
+        let iter = net_arch.clone().into_iter().enumerate();
+        let mut previous = input;
+        let mem_policy = VarMap::new();
+        let vs = VarBuilder::from_varmap(&mem_policy, candle_core::DType::F32, &device);
+        let mut policy_net = candle_nn::seq();
 
-            for (i, (neurons, activation)) in iter {
-                policy_net = policy_net
-                    .add(nn::linear(
-                        &mem_policy.root() / format!("{}", i * 2),
-                        previous,
-                        neurons,
-                        Default::default(),
-                    ))
-                    .add(nn::func(activation));
-                previous = neurons;
-            }
+        for (i, (neurons, activation)) in iter {
             policy_net = policy_net
-                .add(nn::linear(
-                    &mem_policy.root() / format!("{}", net_arch.len() * 2),
+                .add(candle_nn::linear(
                     previous,
-                    output,
-                    Default::default(),
-                ))
-                .add(nn::func(last_activation));
-            mem_policy.double();
-            (Box::new(policy_net), mem_policy)
-        },
-    ))
+                    neurons,
+                    vs.pp(format!("{}", i * 2)),
+                )?)
+                .add(candle_nn::func(activation));
+            previous = neurons;
+        }
+        policy_net = policy_net
+            .add(candle_nn::linear(
+                previous,
+                output,
+                vs.pp(format!("{}", net_arch.len() * 2)),
+            )?)
+            .add(candle_nn::func(last_activation));
+        Ok((Box::new(policy_net), mem_policy))
+    })
 }

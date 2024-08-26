@@ -1,20 +1,20 @@
+use candle_core::{Device, Result, Tensor};
 use rand::distributions::Distribution;
 use rand::{rngs::SmallRng, SeedableRng};
-use tch::{Device, IndexOp, Kind, Tensor};
 
 use super::experience_stats::ExperienceStats;
 
 pub struct RandomExperienceBuffer {
-    obs_size: i64,
-    pub curr_states: Tensor,
-    curr_actions: Tensor,
-    rewards: Tensor,
-    pub next_states: Tensor,
-    dones: Tensor,
-    size: i64,
-    next_idx: i64,
-    capacity: i64,
-    minsize: i64,
+    obs_size: usize,
+    pub curr_states: Vec<Tensor>,
+    curr_actions: Vec<usize>,
+    rewards: Vec<f32>,
+    pub next_states: Vec<Tensor>,
+    dones: Vec<bool>,
+    size: usize,
+    next_idx: usize,
+    capacity: usize,
+    minsize: usize,
     rng: SmallRng,
     device: Device,
     pub stats: ExperienceStats,
@@ -23,29 +23,29 @@ pub struct RandomExperienceBuffer {
 
 impl RandomExperienceBuffer {
     pub fn new(
-        capacity: i64,
-        obs_size: i64,
-        minsize: i64,
+        capacity: usize,
+        obs_size: usize,
+        minsize: usize,
         seed: u64,
         normalize_obs: bool,
         device: Device,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        Ok(Self {
             obs_size,
-            curr_states: Tensor::empty([capacity, obs_size], (Kind::Double, device)),
-            curr_actions: Tensor::empty(capacity, (Kind::Int64, device)),
-            rewards: Tensor::empty(capacity, (Kind::Double, device)),
-            next_states: Tensor::empty([capacity, obs_size], (Kind::Double, device)),
-            dones: Tensor::empty(capacity, (Kind::Int8, device)),
+            curr_states: Vec::with_capacity(capacity),
+            curr_actions: Vec::with_capacity(capacity),
+            rewards: Vec::with_capacity(capacity),
+            next_states: Vec::with_capacity(capacity),
+            dones: Vec::with_capacity(capacity),
             capacity,
             next_idx: 0,
             size: 0,
             minsize,
             rng: SmallRng::seed_from_u64(seed),
+            stats: ExperienceStats::new(obs_size, &device)?,
             device,
-            stats: ExperienceStats::new(obs_size, device),
             normalize_obs,
-        }
+        })
     }
 
     pub fn ready(&self) -> bool {
@@ -54,39 +54,46 @@ impl RandomExperienceBuffer {
 
     pub fn add(
         &mut self,
-        curr_state: &Tensor,
+        curr_state: Tensor,
         curr_action: usize,
         reward: f32,
         done: bool,
-        next_state: &Tensor,
-    ) {
-        let index: i64 = self.obs_size * self.next_idx;
-        let index = Vec::from_iter(index..(index + self.obs_size));
-        let index = &Tensor::from_slice(&index).to_device(self.device);
+        next_state: Tensor,
+    ) -> Result<()> {
+        self.curr_states[self.next_idx] = curr_state;
+        self.curr_actions[self.next_idx] = curr_action;
+        self.rewards[self.next_idx] = reward;
+        self.next_states[self.next_idx] = next_state;
+        self.dones[self.next_idx] = done;
 
-        let curr_state = &curr_state.to_device(self.device).to_kind(Kind::Double);
-        let curr_action = &Tensor::from(curr_action as i64).to_device(self.device);
-        let reward = &Tensor::from(reward)
-            .to_device(self.device)
-            .to_kind(Kind::Double);
-        let done = &Tensor::from(done as i8).to_device(self.device);
-        let next_state = &next_state.to_device(self.device).to_kind(Kind::Double);
+        // let index: i64 = self.obs_size * self.next_idx;
+        // let index = Vec::from_iter(index..(index + self.obs_size));
+        // let index = &Tensor::from_slice(&index).to_device(self.device);
 
-        self.curr_states = self.curr_states.put(index, curr_state, false);
-        self.next_states = self.next_states.put(index, next_state, false);
+        // let curr_state = &curr_state.to_device(self.device).to_kind(Kind::Double);
+        // let curr_action = &Tensor::from(curr_action as i64).to_device(self.device);
+        // let reward = &Tensor::from(reward)
+        //     .to_device(self.device)
+        //     .to_kind(Kind::Double);
+        // let done = &Tensor::from(done as i8).to_device(self.device);
+        // let next_state = &next_state.to_device(self.device).to_kind(Kind::Double);
 
-        let index = &Tensor::from(self.next_idx).to_device(self.device);
+        // self.curr_states = self.curr_states.put(index, curr_state, false);
+        // self.next_states = self.next_states.put(index, next_state, false);
 
-        self.curr_actions = self.curr_actions.put(index, curr_action, false);
-        self.rewards = self.rewards.put(index, reward, false);
-        self.dones = self.dones.put(index, done, false);
+        // let index = &Tensor::from(self.next_idx).to_device(self.device);
 
-        self.next_idx = (self.next_idx + 1) % self.capacity;
-        self.size = self.capacity.min(self.size + 1);
+        // self.curr_actions = self.curr_actions.put(index, curr_action, false);
+        // self.rewards = self.rewards.put(index, reward, false);
+        // self.dones = self.dones.put(index, done, false);
 
-        if self.normalize_obs {
-            self.stats.push(curr_state);
-        }
+        // self.next_idx = (self.next_idx + 1) % self.capacity;
+        // self.size = self.capacity.min(self.size + 1);
+
+        // if self.normalize_obs {
+        //     self.stats.push(curr_state);
+        // }
+        Ok(())
     }
 
     pub fn normalize(&self, values: Tensor) -> Tensor {
