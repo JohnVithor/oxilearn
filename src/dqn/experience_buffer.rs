@@ -39,16 +39,16 @@ impl RandomExperienceBuffer {
 
     pub fn add(
         &mut self,
-        curr_state: Tensor,
+        curr_state: &Tensor,
         curr_action: u32,
         reward: f32,
         done: bool,
-        next_state: Tensor,
+        next_state: &Tensor,
     ) -> Result<()> {
-        self.curr_states[self.next_idx] = curr_state;
+        self.curr_states[self.next_idx] = curr_state.clone();
         self.curr_actions[self.next_idx] = curr_action;
         self.rewards[self.next_idx] = reward;
-        self.next_states[self.next_idx] = next_state;
+        self.next_states[self.next_idx] = next_state.clone();
         self.dones[self.next_idx] = done;
 
         self.next_idx = (self.next_idx + 1) % self.capacity;
