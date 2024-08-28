@@ -1,5 +1,5 @@
 pub mod dqn;
-// pub mod env;
+pub mod env;
 pub mod optimizer_enum;
 // pub mod ppo;
 

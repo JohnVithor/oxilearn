@@ -1,4 +1,4 @@
-use tch::Tensor;
+use candle_core::Tensor;
 
 use crate::OxiLearnErr;
 
