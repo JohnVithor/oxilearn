@@ -1,14 +1,30 @@
+use candle_core::Result;
 use candle_nn::{AdamW, Optimizer, ParamsAdamW, SGD};
+
+pub enum OptimizerConfig {
+    SgdConfig(f64),
+    AdamWConfig(ParamsAdamW),
+}
+
+impl OptimizerConfig {
+    pub fn create(self, vars: Vec<candle_core::Var>) -> Result<OptimizerEnum> {
+        match self {
+            OptimizerConfig::SgdConfig(lr) => {
+                let sgd = SGD::new(vars, lr)?;
+                Ok(OptimizerEnum::Sgd(sgd))
+            }
+            OptimizerConfig::AdamWConfig(params) => {
+                let adamw = AdamW::new(vars, params)?;
+                Ok(OptimizerEnum::AdamW(adamw))
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum OptimizerEnum {
     Sgd(SGD),
     AdamW(AdamW),
-}
-
-pub enum OptimizerConfig {
-    SgdConfig(f64),
-    AdamWConfig(ParamsAdamW),
 }
 
 impl Optimizer for OptimizerEnum {

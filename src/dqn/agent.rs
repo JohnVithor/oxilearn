@@ -7,7 +7,7 @@ use super::{
     epsilon_greedy::EpsilonGreedy, experience_buffer::RandomExperienceBuffer,
     policy::PolicyGenerator,
 };
-use crate::optimizer_enum::OptimizerEnum;
+use crate::optimizer_enum::{OptimizerConfig, OptimizerEnum};
 use candle_core::Result;
 
 pub type TrainResults = (Vec<f32>, Vec<u32>, Vec<f32>, Vec<f32>, Vec<f32>);
@@ -31,7 +31,7 @@ pub struct DQNAgent {
     pub policy_vs: VarMap,
     pub target_policy_vs: VarMap,
     pub optimizer: OptimizerEnum,
-    pub loss_fn: fn(&Tensor, &Tensor) -> Tensor,
+    pub loss_fn: fn(&Tensor, &Tensor) -> Result<Tensor>,
     pub memory: RandomExperienceBuffer,
     pub parameters: ParametersDQN,
     pub device: Device,
@@ -42,8 +42,8 @@ impl DQNAgent {
         action_selector: EpsilonGreedy,
         mem_replay: RandomExperienceBuffer,
         generate_policy: Box<PolicyGenerator>,
-        optimizer: OptimizerEnum,
-        loss_fn: fn(&Tensor, &Tensor) -> Tensor,
+        optimizer: OptimizerConfig,
+        loss_fn: fn(&Tensor, &Tensor) -> Result<Tensor>,
         parameters: ParametersDQN,
         device: Device,
     ) -> Result<Self> {
@@ -52,7 +52,7 @@ impl DQNAgent {
 
         mem_target.clone_from(&mem_policy);
         Ok(Self {
-            optimizer,
+            optimizer: optimizer.create(mem_policy.all_vars())?,
             loss_fn,
             action_selection: action_selector,
             memory: mem_replay,
@@ -131,7 +131,7 @@ impl DQNAgent {
                 // print_python_like(&b_state.i(0));
                 let policy_qvalues = self.batch_qvalues(&b_state, &b_action)?;
                 let expected_values = self.batch_expected_values(&b_state_, &b_reward, &b_done)?;
-                let loss = (self.loss_fn)(&policy_qvalues, &expected_values);
+                let loss = (self.loss_fn)(&policy_qvalues, &expected_values)?;
                 self.optimize(loss)?;
                 values.push(expected_values.mean(0)?.to_scalar()?)
             }

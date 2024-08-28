@@ -7,3 +7,4 @@ edition = "2021"
 candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.6.0" }
 candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.6.0" }
 rand = { version = "0.8", features = ["small_rng"] }
+terrarium ={ path = "./../Terrarium"}
