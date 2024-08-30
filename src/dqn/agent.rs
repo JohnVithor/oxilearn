@@ -1,6 +1,6 @@
 use std::fs;
 
-use candle_core::{Device, Tensor};
+use candle_core::{Device, Tensor, D};
 use candle_nn::{Module, Optimizer, VarMap};
 
 use super::{
@@ -67,26 +67,27 @@ impl DQNAgent {
 
     pub fn get_action(&mut self, state: &Tensor) -> Result<usize> {
         let values = self.policy.forward(state)?.detach();
-        Ok(self.action_selection.get_action(&values))
+        self.action_selection.get_action(&values)
     }
 
     pub fn get_best_action(&self, state: &Tensor) -> Result<usize> {
         let values = self.policy.forward(state)?.detach();
-        let a: u32 = values.argmax(0)?.to_scalar()?;
-        Ok(a as usize)
+        let action = values.argmax(1)?;
+        let action = action.reshape(())?;
+        let action: u32 = action.to_scalar()?;
+        Ok(action as usize)
     }
 
     pub fn add_transition(
         &mut self,
         curr_state: &Tensor,
-        curr_action: u32,
+        curr_action: usize,
         reward: f32,
         done: bool,
         next_state: &Tensor,
-    ) -> Result<()> {
+    ) {
         self.memory
-            .add(curr_state, curr_action, reward, done, next_state)?;
-        Ok(())
+            .add(curr_state, curr_action as u32, reward, done, next_state);
     }
 
     pub fn update_networks(&mut self) {
@@ -98,7 +99,7 @@ impl DQNAgent {
     }
 
     pub fn batch_qvalues(&self, b_states: &Tensor, b_actions: &Tensor) -> Result<Tensor> {
-        self.policy.forward(b_states)?.gather(b_actions, 1)
+        self.policy.forward(b_states)?.gather(b_actions, D::Minus1)
     }
 
     pub fn batch_expected_values(
@@ -108,11 +109,10 @@ impl DQNAgent {
         b_done: &Tensor,
     ) -> Result<Tensor> {
         let best_target_qvalues = self.target_policy.forward(b_state_)?.max_keepdim(1)?;
-        let target_values =
-            ((&Tensor::from_slice(&[1.0], 1, &self.device)? - b_done)? * &best_target_qvalues)?;
-        b_reward
-            + (Tensor::from_slice(&[self.parameters.discount_factor], 1, &self.device)
-                * target_values)?
+        let flag = (-1.0 * (b_done - 1.0)?)?;
+        let flag = flag.to_dtype(candle_core::DType::F32)?;
+        let target_values = &(flag.broadcast_mul(&best_target_qvalues))?;
+        b_reward.broadcast_add(&(self.parameters.discount_factor as f64 * target_values)?)
     }
 
     pub fn optimize(&mut self, loss: Tensor) -> Result<()> {
@@ -126,9 +126,10 @@ impl DQNAgent {
     pub fn update(&mut self, gradient_steps: u32, batch_size: usize) -> Result<Option<f32>> {
         let mut values = vec![];
         if self.memory.ready() {
+            println!("Training");
             for _ in 0..gradient_steps {
                 let (b_state, b_action, b_reward, b_done, b_state_) = self.get_batch(batch_size)?;
-                // print_python_like(&b_state.i(0));
+                println!("Batch");
                 let policy_qvalues = self.batch_qvalues(&b_state, &b_action)?;
                 let expected_values = self.batch_expected_values(&b_state_, &b_reward, &b_done)?;
                 let loss = (self.loss_fn)(&policy_qvalues, &expected_values)?;
@@ -171,119 +172,4 @@ impl DQNAgent {
             .load(format!("{path}/target_policy_weights.safetensors"))?;
         Ok(())
     }
-    // pub fn train_by_steps(
-    //     &mut self,
-    //     env: &mut impl Env,
-    //     eval_env: &mut impl Env,
-    //     n_steps: u32,
-    //     verbose: usize,
-    // ) -> Result<TrainResults, OxiLearnErr> {
-    //     let mut curr_obs: Tensor = env.reset(None)?;
-    //     let mut training_reward: Vec<f32> = vec![];
-    //     let mut training_length: Vec<u32> = vec![];
-    //     let mut training_error: Vec<f32> = vec![];
-    //     let mut evaluation_reward: Vec<f32> = vec![];
-    //     let mut evaluation_length: Vec<f32> = vec![];
-
-    //     let mut n_episodes = 1;
-    //     let mut action_counter: u32 = 0;
-    //     let mut epi_reward: f32 = 0.0;
-    //     self.reset();
-
-    //     for step in 1..=n_steps {
-    //         action_counter += 1;
-    //         let curr_action = self.get_action(&curr_obs);
-    //         // println!("{curr_action}");
-    //         let (next_obs, reward, done, truncated) = env.step(curr_action)?;
-
-    //         epi_reward += reward;
-    //         self.add_transition(&curr_obs, curr_action, reward, done, &next_obs);
-
-    //         curr_obs = next_obs;
-
-    //         if step % self.parameters.train_freq == 0 {
-    //             if let Some(td) =
-    //                 self.update(self.parameters.gradient_steps, self.parameters.batch_size)
-    //             {
-    //                 training_error.push(td)
-    //             }
-    //         }
-
-    //         if done || truncated {
-    //             training_reward.push(epi_reward);
-    //             training_length.push(action_counter);
-    //             if n_episodes % self.parameters.update_freq == 0 && self.update_networks().is_err()
-    //             {
-    //                 println!("copy error")
-    //             }
-    //             curr_obs = env.reset(None)?;
-
-    //             self.action_selection_update(step as f32 / n_steps as f32, epi_reward);
-    //             n_episodes += 1;
-    //             epi_reward = 0.0;
-    //             action_counter = 0;
-    //         }
-
-    //         if step % self.parameters.eval_freq == 0 {
-    //             let (rewards, eval_lengths) = self.evaluate(eval_env, self.parameters.eval_for)?;
-    //             let reward_avg = (rewards.iter().sum::<f32>()) / (rewards.len() as f32);
-    //             let eval_lengths_avg = (eval_lengths.iter().map(|x| *x as f32).sum::<f32>())
-    //                 / (eval_lengths.len() as f32);
-    //             if verbose > 0 {
-    //                 println!(
-    //                     "current step: {step} - mean eval reward: {reward_avg:.1} - exploration epsilon: {:.2}",
-    //                     self.get_epsilon()
-    //                 );
-    //             }
-    //             evaluation_reward.push(reward_avg);
-    //             evaluation_length.push(eval_lengths_avg);
-    //             if step == n_steps
-    //                 || (eval_env.reward_threshold().is_some()
-    //                     && reward_avg > eval_env.reward_threshold().unwrap())
-    //             {
-    //                 training_reward.push(epi_reward);
-    //                 training_length.push(action_counter);
-    //                 break;
-    //             }
-    //         }
-    //     }
-
-    //     Ok((
-    //         training_reward,
-    //         training_length,
-    //         training_error,
-    //         evaluation_reward,
-    //         evaluation_length,
-    //     ))
-    // }
-
-    // pub fn evaluate(
-    //     &mut self,
-    //     eval_env: &mut impl Env,
-    //     n_episodes: u32,
-    // ) -> Result<(Vec<f32>, Vec<u32>), OxiLearnErr> {
-    //     let mut reward_history: Vec<f32> = vec![];
-    //     let mut episode_length: Vec<u32> = vec![];
-    //     for _episode in 0..n_episodes {
-    //         let mut epi_reward: f32 = 0.0;
-    //         let obs_repr = eval_env.reset(None)?;
-    //         let mut curr_action = self.get_best_action(&obs_repr);
-    //         let mut action_counter: u32 = 0;
-    //         loop {
-    //             let (obs, reward, done, truncated) = eval_env.step(curr_action)?;
-    //             let next_obs_repr = obs;
-    //             let next_action_repr: usize = self.get_best_action(&next_obs_repr);
-    //             let next_action = next_action_repr;
-    //             curr_action = next_action;
-    //             epi_reward += reward;
-    //             if done || truncated {
-    //                 reward_history.push(epi_reward);
-    //                 episode_length.push(action_counter);
-    //                 break;
-    //             }
-    //             action_counter += 1;
-    //         }
-    //     }
-    //     Ok((reward_history, episode_length))
-    // }
 }

@@ -44,18 +44,22 @@ impl RandomExperienceBuffer {
         reward: f32,
         done: bool,
         next_state: &Tensor,
-    ) -> Result<()> {
-        self.curr_states[self.next_idx] = curr_state.clone();
-        self.curr_actions[self.next_idx] = curr_action;
-        self.rewards[self.next_idx] = reward;
-        self.next_states[self.next_idx] = next_state.clone();
-        self.dones[self.next_idx] = done;
-
-        self.next_idx = (self.next_idx + 1) % self.capacity;
+    ) {
         if self.size < self.capacity {
+            self.curr_states.push(curr_state.clone());
+            self.curr_actions.push(curr_action);
+            self.rewards.push(reward);
+            self.next_states.push(next_state.clone());
+            self.dones.push(done);
             self.size += 1;
+        } else {
+            self.curr_states[self.next_idx] = curr_state.clone();
+            self.curr_actions[self.next_idx] = curr_action;
+            self.rewards[self.next_idx] = reward;
+            self.next_states[self.next_idx] = next_state.clone();
+            self.dones[self.next_idx] = done;
+            self.next_idx = (self.next_idx + 1) % self.capacity;
         }
-        Ok(())
     }
 
     pub fn sample_batch(
@@ -66,22 +70,28 @@ impl RandomExperienceBuffer {
             rand::distributions::Uniform::new(0usize, self.size);
         let index: Vec<usize> = dist.sample_iter(&mut self.rng).take(size).collect();
         let index: &[usize] = index.as_slice();
-
+        println!("index: {:?}", index);
         let curr_states = select_by_index(&self.curr_states, index);
+
         let curr_actions = select_by_index(&self.curr_actions, index);
         let rewards = select_by_index(&self.rewards, index);
         let next_states = select_by_index(&self.next_states, index);
         let dones = select_by_index(&self.dones, index);
 
         let curr_states = Tensor::stack(curr_states.as_slice(), 0)?;
-        let curr_actions = Tensor::from_vec(curr_actions, 0, &self.device)?;
-        let rewards = Tensor::from_vec(rewards, 0, &self.device)?;
+        println!(" {:?}", curr_states);
+        let curr_actions = Tensor::from_vec(curr_actions, (size, 1, 1), &self.device)?;
+        println!(" {:?}", curr_actions);
+        let rewards = Tensor::from_vec(rewards, (size, 1, 1), &self.device)?;
+        println!(" {:?}", rewards);
         let next_states = Tensor::stack(next_states.as_slice(), 0)?;
+        println!(" {:?}", next_states);
         let dones = Tensor::from_vec(
             dones.into_iter().map(|v| v as u8).collect(),
-            0,
+            (size, 1, 1),
             &self.device,
         )?;
+        println!(" {:?}", dones);
 
         Ok((curr_states, curr_actions, rewards, dones, next_states))
     }

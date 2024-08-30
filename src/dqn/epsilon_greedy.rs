@@ -1,4 +1,4 @@
-use candle_core::Tensor;
+use candle_core::{Result, Tensor};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 pub enum EpsilonUpdateStrategy {
@@ -105,14 +105,15 @@ impl EpsilonGreedy {
         self.current_epsilon != 0.0 && rng <= self.current_epsilon
     }
 
-    pub fn get_action(&mut self, values: &Tensor) -> usize {
-        // print_python_like(values);
+    pub fn get_action(&mut self, values: &Tensor) -> Result<usize> {
         if self.should_explore() {
-            // println!("{:?}", values.size()[0]);
-            self.rng.gen_range(0..values.shape().dims1().unwrap())
+            let end = values.shape().dims2()?.1;
+            Ok(self.rng.gen_range(0..end))
         } else {
-            let a: u32 = values.argmax(0).unwrap().to_scalar().unwrap();
-            a as usize
+            let action = values.argmax(1)?;
+            let action = action.reshape(())?;
+            let action: u32 = action.to_scalar()?;
+            Ok(action as usize)
         }
     }
 

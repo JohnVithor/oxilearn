@@ -17,7 +17,7 @@ pub fn generate_policy(
             let mut previous = input;
             let mem_policy = VarMap::new();
             let vs = VarBuilder::from_varmap(&mem_policy, candle_core::DType::F32, device);
-            let mut policy_net = candle_nn::seq();
+            let mut policy_net: candle_nn::Sequential = candle_nn::seq();
 
             for (i, (neurons, activation)) in iter {
                 policy_net = policy_net

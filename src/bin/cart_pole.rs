@@ -3,7 +3,7 @@ use std::env;
 use candle_core::Result;
 use candle_core::{Device, Tensor};
 use candle_nn::loss::mse;
-use oxilearn::dqn::agent::{DQNAgent, ParametersDQN};
+use oxilearn::dqn::agent::{DQNAgent, ParametersDQN, TrainResults};
 use oxilearn::dqn::epsilon_greedy::{EpsilonGreedy, EpsilonUpdateStrategy};
 use oxilearn::dqn::experience_buffer::RandomExperienceBuffer;
 use oxilearn::dqn::policy::generate_policy;
@@ -17,18 +17,8 @@ fn main() -> Result<()> {
 
     let device = Device::cuda_if_available(0)?;
 
-    let a = Tensor::from_slice(&[1.0, 1.0, 1.0], (1, 3), &device)?;
-    let b = Tensor::from_slice(
-        &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-        (3, 3),
-        &device,
-    )?;
-
-    let c = (a.matmul(&b))?;
-    println!("{c}");
-
     let mut train_env = CartPole::new(500, seed);
-    let eval_env = CartPole::new(500, seed);
+    let mut eval_env = CartPole::new(500, seed);
 
     let update_strategy = EpsilonUpdateStrategy::EpsilonLinearTrainingDecreasing {
         start: 1.0,
@@ -65,17 +55,39 @@ fn main() -> Result<()> {
         device.clone(),
     )?;
 
-    let mut state = train_env.reset(None);
+    let results = train_by_steps(
+        &mut model,
+        &mut train_env,
+        &mut eval_env,
+        5_000,
+        verbose,
+        Some(475.0),
+        &device,
+    )?;
 
-    for _ in 0..1000 {
-        println!("state {:?}", state);
-        let s = Tensor::from_slice(&state, (1, 4), &device)?;
+    let training_steps = results.1.iter().sum::<u32>();
 
-        let action = model.get_best_action(&s)?;
-        let (next_state, reward, terminated, done) = train_env.step(action).unwrap();
-        state = next_state;
-    }
+    let evaluation_results = evaluate(&mut model, &mut eval_env, 10)?;
 
+    let rewards = evaluation_results.0;
+    let reward_avg = (rewards.iter().sum::<f32>()) / (rewards.len() as f32);
+    let variance = rewards
+        .iter()
+        .map(|value| {
+            let diff = reward_avg - *value;
+            diff * diff
+        })
+        .sum::<f32>()
+        / rewards.len() as f32;
+    let std = variance.sqrt();
+
+    println!(
+        "rust,{seed},{training_steps},{reward_avg},{std}",
+        seed = seed,
+        training_steps = training_steps,
+        reward_avg = reward_avg,
+        std = std
+    );
     // ## HERE
 
     // model.save_net("./safetensors/cart_pole").expect("ok");
@@ -106,4 +118,117 @@ fn main() -> Result<()> {
 
     // println!("rust,{seed},{training_steps},{reward_avg},{std}")
     Ok(())
+}
+
+pub fn train_by_steps(
+    agent: &mut DQNAgent,
+    env: &mut CartPole,
+    eval_env: &mut CartPole,
+    n_steps: u32,
+    verbose: usize,
+    threshold: Option<f32>,
+    device: &Device,
+) -> Result<TrainResults> {
+    let mut curr_obs: Tensor = Tensor::from_slice(&env.reset(None), (1, 4), device)?;
+    let mut training_reward: Vec<f32> = vec![];
+    let mut training_length: Vec<u32> = vec![];
+    let mut training_error: Vec<f32> = vec![];
+    let mut evaluation_reward: Vec<f32> = vec![];
+    let mut evaluation_length: Vec<f32> = vec![];
+
+    let mut n_episodes = 1;
+    let mut action_counter: u32 = 0;
+    let mut epi_reward: f32 = 0.0;
+    agent.reset();
+
+    for step in 1..=n_steps {
+        action_counter += 1;
+        let curr_action = agent.get_action(&curr_obs)?;
+        let (next_obs, reward, done, truncated) = env.step(curr_action).unwrap();
+        let next_obs = Tensor::from_slice(&next_obs, (1, 4), device)?;
+        epi_reward += reward;
+        agent.add_transition(&curr_obs, curr_action, reward, done, &next_obs);
+
+        curr_obs = next_obs;
+
+        if step % agent.parameters.train_freq == 0 {
+            if let Some(td) =
+                agent.update(agent.parameters.gradient_steps, agent.parameters.batch_size)?
+            {
+                training_error.push(td)
+            }
+        }
+
+        if done || truncated {
+            training_reward.push(epi_reward);
+            training_length.push(action_counter);
+            if n_episodes % agent.parameters.update_freq == 0 {
+                agent.update_networks();
+            }
+            curr_obs = Tensor::from_slice(&env.reset(None), (1, 4), device)?;
+
+            agent.action_selection_update(step as f32 / n_steps as f32, epi_reward);
+            n_episodes += 1;
+            epi_reward = 0.0;
+            action_counter = 0;
+        }
+
+        if step % agent.parameters.eval_freq == 0 {
+            let (rewards, eval_lengths) = evaluate(agent, eval_env, agent.parameters.eval_for)?;
+            let reward_avg = (rewards.iter().sum::<f32>()) / (rewards.len() as f32);
+            let eval_lengths_avg =
+                (eval_lengths.iter().map(|x| *x as f32).sum::<f32>()) / (eval_lengths.len() as f32);
+            if verbose > 0 {
+                println!(
+                        "current step: {step} - mean eval reward: {reward_avg:.1} - exploration epsilon: {:.2}",
+                        agent.get_epsilon()
+                    );
+            }
+            evaluation_reward.push(reward_avg);
+            evaluation_length.push(eval_lengths_avg);
+            if step == n_steps || (threshold.is_some() && reward_avg > threshold.unwrap()) {
+                training_reward.push(epi_reward);
+                training_length.push(action_counter);
+                break;
+            }
+        }
+    }
+
+    Ok((
+        training_reward,
+        training_length,
+        training_error,
+        evaluation_reward,
+        evaluation_length,
+    ))
+}
+
+pub fn evaluate(
+    agent: &mut DQNAgent,
+    eval_env: &mut CartPole,
+    n_episodes: u32,
+) -> Result<(Vec<f32>, Vec<u32>)> {
+    let mut reward_history: Vec<f32> = vec![];
+    let mut episode_length: Vec<u32> = vec![];
+    for _episode in 0..n_episodes {
+        let mut epi_reward: f32 = 0.0;
+        let obs_repr = Tensor::from_slice(&eval_env.reset(None), (1, 4), &agent.device)?;
+        let mut curr_action = agent.get_best_action(&obs_repr)?;
+        let mut action_counter: u32 = 0;
+        loop {
+            let (obs, reward, done, truncated) = eval_env.step(curr_action).unwrap();
+            let next_obs_repr = Tensor::from_slice(&obs, (1, 4), &agent.device)?;
+            let next_action_repr: usize = agent.get_best_action(&next_obs_repr)?;
+            let next_action = next_action_repr;
+            curr_action = next_action;
+            epi_reward += reward;
+            if done || truncated {
+                reward_history.push(epi_reward);
+                episode_length.push(action_counter);
+                break;
+            }
+            action_counter += 1;
+        }
+    }
+    Ok((reward_history, episode_length))
 }
