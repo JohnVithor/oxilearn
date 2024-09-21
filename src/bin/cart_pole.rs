@@ -8,7 +8,7 @@ use oxilearn::dqn::epsilon_greedy::{EpsilonGreedy, EpsilonUpdateStrategy};
 use oxilearn::dqn::experience_buffer::RandomExperienceBuffer;
 use oxilearn::dqn::policy::generate_policy;
 use terrarium::classic_control::cart_pole::CartPole;
-use terrarium::Environment;
+use terrarium::environment::Environment;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -43,9 +43,9 @@ fn main() -> Result<()> {
         mse,
         ParametersDQN {
             learning_rate: 0.001,
-            gradient_steps: 1,
-            train_freq: 1,
-            batch_size: 32,
+            gradient_steps: 2,
+            train_freq: 32,
+            batch_size: 64,
             update_freq: 10,
             eval_freq: 1000,
             eval_for: 10,
@@ -160,20 +160,22 @@ pub fn train_by_steps(
         }
 
         if done || truncated {
+            // println!("Episode: {}", n_episodes);
             training_reward.push(epi_reward);
             training_length.push(action_counter);
             if n_episodes % agent.parameters.update_freq == 0 {
+                agent.action_selection_update(step as f32 / n_steps as f32, epi_reward);
                 agent.update_networks();
             }
             curr_obs = Tensor::from_slice(&env.reset(None), (1, 4), device)?;
 
-            agent.action_selection_update(step as f32 / n_steps as f32, epi_reward);
             n_episodes += 1;
             epi_reward = 0.0;
             action_counter = 0;
         }
 
         if step % agent.parameters.eval_freq == 0 {
+            // println!("evaluating");
             let (rewards, eval_lengths) = evaluate(agent, eval_env, agent.parameters.eval_for)?;
             let reward_avg = (rewards.iter().sum::<f32>()) / (rewards.len() as f32);
             let eval_lengths_avg =

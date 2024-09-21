@@ -1,5 +1,5 @@
 use candle_core::{Device, Result, Tensor};
-use rand::distributions::Distribution;
+use rand::seq::IteratorRandom;
 use rand::{rngs::SmallRng, SeedableRng};
 
 pub struct RandomExperienceBuffer {
@@ -66,11 +66,10 @@ impl RandomExperienceBuffer {
         &mut self,
         size: usize,
     ) -> Result<(Tensor, Tensor, Tensor, Tensor, Tensor)> {
-        let dist: rand::distributions::Uniform<usize> =
-            rand::distributions::Uniform::new(0usize, self.size);
-        let index: Vec<usize> = dist.sample_iter(&mut self.rng).take(size).collect();
+        // println!("size: {:?}", size);
+        let index: Vec<usize> = (0..self.size).choose_multiple(&mut self.rng, size);
         let index: &[usize] = index.as_slice();
-        println!("index: {:?}", index);
+        // println!("index: {:?}", index);
         let curr_states = select_by_index(&self.curr_states, index);
 
         let curr_actions = select_by_index(&self.curr_actions, index);
@@ -79,19 +78,19 @@ impl RandomExperienceBuffer {
         let dones = select_by_index(&self.dones, index);
 
         let curr_states = Tensor::stack(curr_states.as_slice(), 0)?;
-        println!(" {:?}", curr_states);
+        // println!(" {:?}", curr_states);
         let curr_actions = Tensor::from_vec(curr_actions, (size, 1, 1), &self.device)?;
-        println!(" {:?}", curr_actions);
+        // println!(" {:?}", curr_actions);
         let rewards = Tensor::from_vec(rewards, (size, 1, 1), &self.device)?;
-        println!(" {:?}", rewards);
+        // println!(" {:?}", rewards);
         let next_states = Tensor::stack(next_states.as_slice(), 0)?;
-        println!(" {:?}", next_states);
+        // println!(" {:?}", next_states);
         let dones = Tensor::from_vec(
             dones.into_iter().map(|v| v as u8).collect(),
             (size, 1, 1),
             &self.device,
         )?;
-        println!(" {:?}", dones);
+        // println!(" {:?}", dones);
 
         Ok((curr_states, curr_actions, rewards, dones, next_states))
     }

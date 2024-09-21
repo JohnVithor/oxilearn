@@ -1,6 +1,6 @@
 use std::fs;
 
-use candle_core::{Device, Tensor, D};
+use candle_core::{Device, Tensor};
 use candle_nn::{Module, Optimizer, VarMap};
 
 use super::{
@@ -99,7 +99,10 @@ impl DQNAgent {
     }
 
     pub fn batch_qvalues(&self, b_states: &Tensor, b_actions: &Tensor) -> Result<Tensor> {
-        self.policy.forward(b_states)?.gather(b_actions, D::Minus1)
+        // println!("forward qvalues");
+        let v = self.policy.forward(b_states)?;
+        // println!("gather");
+        v.gather(b_actions, 2)
     }
 
     pub fn batch_expected_values(
@@ -108,10 +111,17 @@ impl DQNAgent {
         b_reward: &Tensor,
         b_done: &Tensor,
     ) -> Result<Tensor> {
-        let best_target_qvalues = self.target_policy.forward(b_state_)?.max_keepdim(1)?;
+        // println!("forward expected");
+        let target_qvalues = self.target_policy.forward(b_state_)?;
+        // println!("max");
+        let best_target_qvalues = target_qvalues.max_keepdim(2)?;
+        // println!("flag");
         let flag = (-1.0 * (b_done - 1.0)?)?;
+        // println!("dtype");
         let flag = flag.to_dtype(candle_core::DType::F32)?;
+        // println!("bradcast");
         let target_values = &(flag.broadcast_mul(&best_target_qvalues))?;
+        // println!("add");
         b_reward.broadcast_add(&(self.parameters.discount_factor as f64 * target_values)?)
     }
 
@@ -126,16 +136,23 @@ impl DQNAgent {
     pub fn update(&mut self, gradient_steps: u32, batch_size: usize) -> Result<Option<f32>> {
         let mut values = vec![];
         if self.memory.ready() {
-            println!("Training");
+            // println!("Training");
             for _ in 0..gradient_steps {
                 let (b_state, b_action, b_reward, b_done, b_state_) = self.get_batch(batch_size)?;
-                println!("Batch");
                 let policy_qvalues = self.batch_qvalues(&b_state, &b_action)?;
                 let expected_values = self.batch_expected_values(&b_state_, &b_reward, &b_done)?;
                 let loss = (self.loss_fn)(&policy_qvalues, &expected_values)?;
                 self.optimize(loss)?;
-                values.push(expected_values.mean(0)?.to_scalar()?)
+                // println!("optimized");
+                let mean_ev = expected_values.mean(0)?;
+                // println!("reshape");
+                let val = mean_ev.reshape(&[])?;
+                // println!("scalar");
+                let val = val.to_scalar()?;
+                // println!("push");
+                values.push(val)
             }
+            // println!("Training done");
             Ok(Some((values.iter().sum::<f32>()) / (values.len() as f32)))
         } else {
             Ok(None)
