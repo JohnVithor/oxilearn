@@ -77,17 +77,17 @@ impl RandomExperienceBuffer {
         let next_states = select_by_index(&self.next_states, index);
         let dones = select_by_index(&self.dones, index);
 
-        let curr_states = Tensor::stack(curr_states.as_slice(), 0)?;
+        let curr_states = Tensor::stack(curr_states.as_slice(), 0)?.reshape(&[size, 4])?;
         // println!(" {:?}", curr_states);
-        let curr_actions = Tensor::from_vec(curr_actions, (size, 1, 1), &self.device)?;
+        let curr_actions = Tensor::from_vec(curr_actions, (size, 1), &self.device)?;
         // println!(" {:?}", curr_actions);
-        let rewards = Tensor::from_vec(rewards, (size, 1, 1), &self.device)?;
+        let rewards = Tensor::from_vec(rewards, (size, 1), &self.device)?;
         // println!(" {:?}", rewards);
-        let next_states = Tensor::stack(next_states.as_slice(), 0)?;
+        let next_states = Tensor::stack(next_states.as_slice(), 0)?.reshape(&[size, 4])?;
         // println!(" {:?}", next_states);
         let dones = Tensor::from_vec(
             dones.into_iter().map(|v| v as u8).collect(),
-            (size, 1, 1),
+            (size, 1),
             &self.device,
         )?;
         // println!(" {:?}", dones);

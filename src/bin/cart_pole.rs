@@ -3,6 +3,8 @@ use std::env;
 use candle_core::Result;
 use candle_core::{Device, Tensor};
 use candle_nn::loss::mse;
+use candle_nn::ParamsAdamW;
+use mlflow::timestamp;
 use oxilearn::dqn::agent::{DQNAgent, ParametersDQN, TrainResults};
 use oxilearn::dqn::epsilon_greedy::{EpsilonGreedy, EpsilonUpdateStrategy};
 use oxilearn::dqn::experience_buffer::RandomExperienceBuffer;
@@ -29,7 +31,8 @@ fn main() -> Result<()> {
 
     let mem_replay = RandomExperienceBuffer::new(10_000, 1000, seed + 3, device.clone())?;
     let policy = generate_policy(
-        vec![(256, |x: &Tensor| x.relu()), (256, |x: &Tensor| x.relu())],
+        vec![(16, |x: &Tensor| x.relu())],
+        // vec![(256, |x: &Tensor| x.relu()), (256, |x: &Tensor| x.relu())],
         |xs: &Tensor| Ok(xs.clone()),
         4,
         2,
@@ -39,13 +42,16 @@ fn main() -> Result<()> {
         action_selector,
         mem_replay,
         policy,
-        oxilearn::optimizer_enum::OptimizerConfig::SgdConfig(0.001),
+        oxilearn::optimizer_enum::OptimizerConfig::AdamWConfig(ParamsAdamW {
+            lr: 0.0001,
+            ..Default::default()
+        }),
         mse,
         ParametersDQN {
-            learning_rate: 0.001,
-            gradient_steps: 2,
-            train_freq: 32,
-            batch_size: 64,
+            learning_rate: 0.0001,
+            gradient_steps: 1,
+            train_freq: 1,
+            batch_size: 128,
             update_freq: 10,
             eval_freq: 1000,
             eval_for: 10,
@@ -129,6 +135,11 @@ pub fn train_by_steps(
     threshold: Option<f32>,
     device: &Device,
 ) -> Result<TrainResults> {
+    let client: mlflow::Client = mlflow::Client::for_server("http://127.0.0.1:8080/api");
+    let experiment = client
+        .create_experiment("3")
+        .unwrap_or_else(|| client.get_experiment("3").unwrap());
+
     let mut curr_obs: Tensor = Tensor::from_slice(&env.reset(None), (1, 4), device)?;
     let mut training_reward: Vec<f32> = vec![];
     let mut training_length: Vec<u32> = vec![];
@@ -141,30 +152,57 @@ pub fn train_by_steps(
     let mut epi_reward: f32 = 0.0;
     agent.reset();
 
+    let run = experiment.create_run();
+
+    // for (i, v) in agent.policy_vs.all_vars().iter().enumerate() {
+    //     for (j, w) in v.flatten_all()?.to_vec1()?.iter().enumerate() {
+    //         let w: f32 = *w;
+    //         run.log_metric(&format!("policy_vs_{}_{}", i, j), w as f64, timestamp(), 0);
+    //     }
+    // }
+
     for step in 1..=n_steps {
         action_counter += 1;
+        run.log_metric(
+            "epsilon",
+            agent.get_epsilon() as f64,
+            timestamp(),
+            step as u64,
+        );
         let curr_action = agent.get_action(&curr_obs)?;
+        run.log_metric("action", curr_action as f64, timestamp(), step as u64);
         let (next_obs, reward, done, truncated) = env.step(curr_action).unwrap();
         let next_obs = Tensor::from_slice(&next_obs, (1, 4), device)?;
         epi_reward += reward;
         agent.add_transition(&curr_obs, curr_action, reward, done, &next_obs);
 
+        run.log_metric("reward", reward as f64, timestamp(), step as u64);
         curr_obs = next_obs;
 
         if step % agent.parameters.train_freq == 0 {
-            if let Some(td) =
-                agent.update(agent.parameters.gradient_steps, agent.parameters.batch_size)?
-            {
-                training_error.push(td)
+            if let Some(td) = agent.update(
+                &run,
+                step as u64,
+                agent.parameters.gradient_steps,
+                agent.parameters.batch_size,
+            )? {
+                training_error.push(td);
             }
         }
 
         if done || truncated {
             // println!("Episode: {}", n_episodes);
+            run.log_metric("epi_reward", epi_reward as f64, timestamp(), step as u64);
+            run.log_metric(
+                "action_counter",
+                action_counter as f64,
+                timestamp(),
+                step as u64,
+            );
+
             training_reward.push(epi_reward);
             training_length.push(action_counter);
             if n_episodes % agent.parameters.update_freq == 0 {
-                agent.action_selection_update(step as f32 / n_steps as f32, epi_reward);
                 agent.update_networks();
             }
             curr_obs = Tensor::from_slice(&env.reset(None), (1, 4), device)?;
@@ -173,7 +211,7 @@ pub fn train_by_steps(
             epi_reward = 0.0;
             action_counter = 0;
         }
-
+        agent.action_selection_update(step as f32 / n_steps as f32, epi_reward);
         if step % agent.parameters.eval_freq == 0 {
             // println!("evaluating");
             let (rewards, eval_lengths) = evaluate(agent, eval_env, agent.parameters.eval_for)?;
@@ -186,6 +224,13 @@ pub fn train_by_steps(
                         agent.get_epsilon()
                     );
             }
+            run.log_metric(
+                "mean eval reward",
+                reward_avg as f64,
+                timestamp(),
+                step as u64,
+            );
+
             evaluation_reward.push(reward_avg);
             evaluation_length.push(eval_lengths_avg);
             if step == n_steps || (threshold.is_some() && reward_avg > threshold.unwrap()) {
@@ -195,6 +240,8 @@ pub fn train_by_steps(
             }
         }
     }
+
+    run.terminate();
 
     Ok((
         training_reward,

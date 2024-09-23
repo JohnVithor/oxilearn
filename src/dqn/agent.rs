@@ -1,7 +1,9 @@
 use std::fs;
 
-use candle_core::{Device, Tensor};
+use candle_core::{Device, Tensor, D};
 use candle_nn::{Module, Optimizer, VarMap};
+use mlflow::timestamp;
+use mlflow::Run;
 
 use super::{
     epsilon_greedy::EpsilonGreedy, experience_buffer::RandomExperienceBuffer,
@@ -72,7 +74,7 @@ impl DQNAgent {
 
     pub fn get_best_action(&self, state: &Tensor) -> Result<usize> {
         let values = self.policy.forward(state)?.detach();
-        let action = values.argmax(1)?;
+        let action = values.argmax(D::Minus1)?;
         let action = action.reshape(())?;
         let action: u32 = action.to_scalar()?;
         Ok(action as usize)
@@ -102,7 +104,7 @@ impl DQNAgent {
         // println!("forward qvalues");
         let v = self.policy.forward(b_states)?;
         // println!("gather");
-        v.gather(b_actions, 2)
+        v.gather(b_actions, D::Minus1)
     }
 
     pub fn batch_expected_values(
@@ -114,7 +116,7 @@ impl DQNAgent {
         // println!("forward expected");
         let target_qvalues = self.target_policy.forward(b_state_)?;
         // println!("max");
-        let best_target_qvalues = target_qvalues.max_keepdim(2)?;
+        let best_target_qvalues = target_qvalues.max_keepdim(D::Minus1)?;
         // println!("flag");
         let flag = (-1.0 * (b_done - 1.0)?)?;
         // println!("dtype");
@@ -130,10 +132,24 @@ impl DQNAgent {
         // loss.backward();
         // self.optimizer.clip_grad_norm(self.parameters.max_grad_norm);
         // self.optimizer.step();
+        // self.policy_vs.all_vars().iter_mut().for_each(|v| {
+        //     v.clamp(
+        //         -self.parameters.max_grad_norm,
+        //         self.parameters.max_grad_norm,
+        //     )
+        //     .unwrap();
+        // });
+
         self.optimizer.backward_step(&loss)
     }
 
-    pub fn update(&mut self, gradient_steps: u32, batch_size: usize) -> Result<Option<f32>> {
+    pub fn update(
+        &mut self,
+        run: &Run,
+        step: u64,
+        gradient_steps: u32,
+        batch_size: usize,
+    ) -> Result<Option<f32>> {
         let mut values = vec![];
         if self.memory.ready() {
             // println!("Training");
@@ -142,6 +158,8 @@ impl DQNAgent {
                 let policy_qvalues = self.batch_qvalues(&b_state, &b_action)?;
                 let expected_values = self.batch_expected_values(&b_state_, &b_reward, &b_done)?;
                 let loss = (self.loss_fn)(&policy_qvalues, &expected_values)?;
+                let a: f32 = loss.to_scalar()?;
+                run.log_metric("loss", a as f64, timestamp(), step);
                 self.optimize(loss)?;
                 // println!("optimized");
                 let mean_ev = expected_values.mean(0)?;
@@ -149,11 +167,43 @@ impl DQNAgent {
                 let val = mean_ev.reshape(&[])?;
                 // println!("scalar");
                 let val = val.to_scalar()?;
+                run.log_metric("mean_expected value", val as f64, timestamp(), step);
                 // println!("push");
                 values.push(val)
             }
             // println!("Training done");
-            Ok(Some((values.iter().sum::<f32>()) / (values.len() as f32)))
+            let val = (values.iter().sum::<f32>()) / (values.len() as f32);
+            run.log_metric("mean mean_expected value", val as f64, timestamp(), step);
+
+            for (i, v) in self.policy_vs.all_vars().iter().enumerate() {
+                let m_max: f32 = *v
+                    .flatten_all()?
+                    .to_vec1()?
+                    .iter()
+                    .max_by(|x: &&f32, y: &&f32| (x).total_cmp(y))
+                    .unwrap();
+                run.log_metric(
+                    &format!("max policy_vs_{}", i),
+                    m_max as f64,
+                    timestamp(),
+                    step,
+                );
+
+                let m_min: f32 = *v
+                    .flatten_all()?
+                    .to_vec1()?
+                    .iter()
+                    .min_by(|x: &&f32, y: &&f32| (x).total_cmp(y))
+                    .unwrap();
+                run.log_metric(
+                    &format!("min policy_vs_{}", i),
+                    m_min as f64,
+                    timestamp(),
+                    step,
+                );
+            }
+
+            Ok(Some(val))
         } else {
             Ok(None)
         }

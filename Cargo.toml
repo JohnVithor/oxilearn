@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.6.0" }
-candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.6.0" }
+candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.7.0" }
+candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.7.0" }
 rand = { version = "0.8", features = ["small_rng"] }
-terrarium ={ path = "./../Terrarium"}
+terrarium = { path = "./../Terrarium"}
+mlflow = "0.1.0"
